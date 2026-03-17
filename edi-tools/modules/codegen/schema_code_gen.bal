@@ -25,13 +25,14 @@ public function generateCodeForSchema(json schema, string outputPath) returns er
         recordsString += rec.toString() + "\n";
     }
 
-    // Generate envelope API functions if the schema includes headerSegments / trailerSegments
+    // Generate envelope API functions if the schema includes an envelope
     string headersFunc = "";
-    string envelopeFunc = "";
-    if ediSchema.headerSegments.length() > 0 {
+    string interchangeFunc = "";
+    edi:EdiEnvelopeSchema? envelope = ediSchema.envelope;
+    if envelope is edi:EdiEnvelopeSchema {
         headersFunc = string `
 # Parse only the envelope header segments of the EDI text and return immediately.
-# Requires the schema to have headerSegments defined (generated schemas include these).
+# Requires the schema to have an envelope defined (generated schemas include this).
 #
 # + ediText - EDI string to be parsed
 # + return - Parsed header segments as JSON, or error
@@ -40,18 +41,16 @@ public isolated function headersFromEdiString(string ediText) returns json|error
     return edi:headersFromEdiString(ediText, schema);
 }
 `;
-    }
-    if ediSchema.headerSegments.length() > 0 && ediSchema.trailerSegments.length() > 0 {
-        envelopeFunc = string `
-# Parse the EDI text in one pass, returning parsed envelope headers and trailers
-# with the transaction body left as raw segment strings.
-# Requires the schema to have both headerSegments and trailerSegments defined.
+        interchangeFunc = string `
+# Parse the full envelope hierarchy of the EDI text.
+# Returns an EdiInterchange with parsed headers, transaction bodies, and trailers.
+# Transaction body parsing is fail-safe: malformed bodies are preserved as raw strings.
 #
 # + ediText - EDI string to be parsed
-# + return - EdiEnvelope with parsed headers, raw body strings, and parsed trailers; or error
-public isolated function envelopeFromEdiString(string ediText) returns edi:EdiEnvelope|error {
+# + return - Parsed interchange or error
+public isolated function interchangeFromEdiString(string ediText) returns edi:EdiInterchange|error {
     edi:EdiSchema schema = check edi:getSchema(schemaJson);
-    return edi:envelopeFromEdiString(ediText, schema);
+    return edi:interchangeFromEdiString(ediText, schema);
 }
 `;
     }
@@ -105,7 +104,7 @@ public isolated function toEdiStringWithSchema(${ediSchema.name} data, edi:EdiSc
 }
 
 ${headersFunc}
-${envelopeFunc}
+${interchangeFunc}
 ${recordsString}
 
 final readonly & json schemaJson = ${schema.toJsonString()};

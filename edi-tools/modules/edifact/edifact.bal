@@ -47,13 +47,23 @@ type Delimiters record {|
 
 type SegmentDefintions map<SegmentDef>;
 
+type EnvelopeLevel record {|
+    (Segement|SegmentGroup)[] header;
+    (Segement|SegmentGroup)[] trailer;
+|};
+
+type EnvelopeSchema record {|
+    EnvelopeLevel interchange;
+    EnvelopeLevel group?;
+    EnvelopeLevel 'transaction;
+|};
+
 type EDISchema record {|
     string name;
     string[] ignoreSegments;
     Delimiters delimiters;
-    (Segement|SegmentGroup)[] headerSegments = [];
+    EnvelopeSchema? envelope = ();
     (Segement|SegmentGroup)[] segments;
-    (Segement|SegmentGroup)[] trailerSegments = [];
     SegmentDefintions segmentDefinitions;
 |};
 
@@ -153,20 +163,36 @@ function genMsgTypeEdiSchema(string msgType, SegmentDefintions segmentDefinition
 }
 
 # Extracts UNH (message header) and UNT (message trailer) segments from the flat
-# segments array into headerSegments and trailerSegments respectively.
-# This enables the tiered envelope parsing API in ballerina/edi.
+# segments array into a structured envelope with interchange and transaction levels.
+# EDIFACT schemas do not include UNG/UNE, so the group level is omitted.
+# UNB/UNZ are handled via ignoreSegments (not present in the segment list).
 function extractEdifactEnvelopeSegments(EDISchema ediSchema) {
+    (Segement|SegmentGroup)[] unhHeaders = [];
+    (Segement|SegmentGroup)[] untTrailers = [];
     (Segement|SegmentGroup)[] remaining = [];
     foreach Segement|SegmentGroup seg in ediSchema.segments {
         if seg is Segement && seg.ref == "UNH" {
-            ediSchema.headerSegments.push(seg);
+            unhHeaders.push(seg);
         } else if seg is Segement && seg.ref == "UNT" {
-            ediSchema.trailerSegments.push(seg);
+            untTrailers.push(seg);
         } else {
             remaining.push(seg);
         }
     }
     ediSchema.segments = remaining;
+
+    if unhHeaders.length() > 0 || untTrailers.length() > 0 {
+        ediSchema.envelope = {
+            interchange: {
+                header: [],
+                trailer: []
+            },
+            'transaction: {
+                header: unhHeaders,
+                trailer: untTrailers
+            }
+        };
+    }
 }
 
 function genSegmentsSchema(regexp:Groups[] segmentsMatch, map<SegmentDef> allSegmentDefinitions, (Segement|SegmentGroup)[] segments, SegmentDefintions segmentDefintions) returns error? {

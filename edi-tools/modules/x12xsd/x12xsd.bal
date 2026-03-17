@@ -105,21 +105,66 @@ function convertFromX12WithHeaders(string inPath) returns edi:EdiSchema|error {
     return ediSchema;
 }
 
-# Extracts ST (transaction set header) and SE (transaction set trailer) segments
-# from the flat segments array into headerSegments and trailerSegments respectively.
-# This enables the tiered envelope parsing API in ballerina/edi.
+# Extracts envelope segments (ISA/IEA, GS/GE, ST/SE) from the flat segments array
+# into a structured envelope with interchange, group, and transaction levels.
 function extractEnvelopeSegments(edi:EdiSchema ediSchema) {
+    edi:EdiUnitSchema[] isaHeaders = [];
+    edi:EdiUnitSchema[] ieaTrailers = [];
+    edi:EdiUnitSchema[] gsHeaders = [];
+    edi:EdiUnitSchema[] geTrailers = [];
+    edi:EdiUnitSchema[] stHeaders = [];
+    edi:EdiUnitSchema[] seTrailers = [];
     edi:EdiUnitSchema[] remaining = [];
+
     foreach edi:EdiUnitSchema seg in ediSchema.segments {
-        if seg is edi:EdiSegSchema && seg.code == "ST" {
-            ediSchema.headerSegments.push(seg);
-        } else if seg is edi:EdiSegSchema && seg.code == "SE" {
-            ediSchema.trailerSegments.push(seg);
+        if seg is edi:EdiSegSchema {
+            match seg.code {
+                "ISA" => { isaHeaders.push(seg); }
+                "IEA" => { ieaTrailers.push(seg); }
+                "GS" => { gsHeaders.push(seg); }
+                "GE" => { geTrailers.push(seg); }
+                "ST" => { stHeaders.push(seg); }
+                "SE" => { seTrailers.push(seg); }
+                _ => { remaining.push(seg); }
+            }
+        } else if seg is edi:EdiUnitRef {
+            match seg.ref {
+                "ISA" => { isaHeaders.push(seg); }
+                "IEA" => { ieaTrailers.push(seg); }
+                "GS" => { gsHeaders.push(seg); }
+                "GE" => { geTrailers.push(seg); }
+                "ST" => { stHeaders.push(seg); }
+                "SE" => { seTrailers.push(seg); }
+                _ => { remaining.push(seg); }
+            }
         } else {
             remaining.push(seg);
         }
     }
+
     ediSchema.segments = remaining;
+
+    // Only set envelope if at least transaction-level segments were found
+    if stHeaders.length() > 0 || seTrailers.length() > 0 {
+        edi:EdiEnvelopeSchema envelope = {
+            interchange: {
+                header: isaHeaders,
+                trailer: ieaTrailers
+            },
+            'transaction: {
+                header: stHeaders,
+                trailer: seTrailers
+            }
+        };
+        // Only include group level if GS/GE segments were found
+        if gsHeaders.length() > 0 || geTrailers.length() > 0 {
+            envelope.group = {
+                header: gsHeaders,
+                trailer: geTrailers
+            };
+        }
+        ediSchema.envelope = envelope;
+    }
 }
 
 function convertSegmentGroup(xml segmentGroup, xml x12xsd, edi:EdiSchema schema, string dirPath = "", int parentMinOccur = 0, int parentMaxOccur = 1) returns edi:EdiSegGroupSchema|error {
